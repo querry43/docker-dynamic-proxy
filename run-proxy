@@ -1,0 +1,37 @@
+#!/bin/bash
+
+sock=/var/run/docker.sock
+
+function update_config {
+    rm -f /etc/nginx/conf.d/vhost_*
+
+    containers=$(echo -e "GET /containers/json HTTP/1.0\r\n" | nc -U $sock | grep '\[' | jq '.[] | .Id' | tr -d \")
+   
+    for container in $containers; do
+        json=$(echo -e "GET /containers/$container/json HTTP/1.0\r\n" | nc -U $sock | grep '\[')
+        container_name=$(echo "$json" | jq  '. | .Name' | tr -d \"/)
+        vhost_name=$(echo "$json" | jq  '. | .Config.Env' | grep VIRTUAL_HOST | sed 's/.*=\(.*\)".*/\1/')
+        proxy_port=$(echo "$json" | jq  '. | .Config.Env' | grep PROXY_PORT | sed 's/.*=\(.*\)".*/\1/')
+   
+        if [ ! -z "$vhost_name" ]; then
+            echo "adding $vhost_name -> $container_name:${proxy_port:-80}"
+            cat > /etc/nginx/conf.d/vhost_$vhost_name.conf <<EOF
+
+server {
+   listen       80;
+   server_name  $vhost_name;
+
+   location / {
+       proxy_pass   http://$container_name:${proxy_port:-80};
+   }
+}
+
+EOF
+
+        fi
+    done
+}
+
+update_config
+( while $(true); do sleep 1m; update_config; nginx -s reload; done ) &
+nginx -g 'daemon off;'
