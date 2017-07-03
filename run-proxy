@@ -10,11 +10,13 @@ function update_config {
     for container in $containers; do
         json=$(echo -e "GET /containers/$container/json HTTP/1.0\r\n" | nc -U $sock | grep '\[')
         container_name=$(echo "$json" | jq  '. | .Name' | tr -d \"/)
+        ip=$(echo "$json" | jq  '. | .NetworkSettings.Networks.bridge.IPAddress' | sed 's/"//g')
         vhost_name=$(echo "$json" | jq  '. | .Config.Env' | grep VIRTUAL_HOST | sed 's/.*=\(.*\)".*/\1/')
         proxy_port=$(echo "$json" | jq  '. | .Config.Env' | grep PROXY_PORT | sed 's/.*=\(.*\)".*/\1/')
+        proxy_port=${proxy_port:-80}
    
         if [ ! -z "$vhost_name" ]; then
-            echo "adding $vhost_name -> $container_name:${proxy_port:-80}"
+            echo "adding redirect for $vhost_name ($container_name) to $ip:${proxy_port}"
             cat > /etc/nginx/conf.d/vhost_$vhost_name.conf <<EOF
 
 server {
@@ -28,7 +30,7 @@ server {
    }
 
    location / {
-       proxy_pass   http://$container_name:${proxy_port:-80};
+       proxy_pass   http://$ip:${proxy_port:-80};
    }
 }
 
@@ -42,7 +44,7 @@ server {
    ssl_certificate_key /etc/ssl/private/privkey.pem;
 
    location / {
-       proxy_pass   http://$container_name:${proxy_port:-80};
+       proxy_pass   http://$ip:${proxy_port};
    }
 }
 
